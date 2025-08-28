@@ -151,7 +151,7 @@ The Proof of Participation whitepaper is available in the repository, detailing 
 
 **Creator**: MicroGuy  
 **Email**: webmaster@microguy.net  
-**Website**: [goldcoin.org](https://goldcoin.org)  
+**Website**: [goldcoinproject.org](https://goldcoinproject.org)  
 **Original Launch**: May 15, 2013
 
 ## License
