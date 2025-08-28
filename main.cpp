@@ -54,6 +54,41 @@ vector<unsigned char> vchDefaultKey;
 // Settings
 int fGenerateBitcoins = false;
 int64 nTransactionFee = 0;
+
+// Proof of Participation
+static const int64 MINIMUM_STAKE = 1000 * COIN;  // 1000 GLC to participate
+
+int64 GetTotalStake()
+{
+    // Sum all mature stakes
+    int64 nTotal = 0;
+    CRITICAL_BLOCK(cs_mapWallet)
+    {
+        for (map<uint256, CWalletTx>::iterator it = mapWallet.begin(); it != mapWallet.end(); ++it)
+        {
+            CWalletTx& wtx = (*it).second;
+            if (wtx.GetDepthInMainChain() >= 1440)  // 2 days maturity
+                nTotal += wtx.GetCredit();
+        }
+    }
+    return nTotal;
+}
+
+bool CBlock::ValidateParticipation(int nHeight) const
+{
+    // Extract participation proof from coinbase
+    if (vtx.empty() || !vtx[0].IsCoinBase())
+        return false;
+    
+    // Get stake amount from coinbase scriptSig
+    CScript scriptSig = vtx[0].vin[0].scriptSig;
+    
+    // Simple validation for now
+    // In production: verify stake ownership and lottery win
+    return true;
+}
+
+static const int POP_ACTIVATION_HEIGHT = 3500000;
 CAddress addrIncoming;
 int fLimitProcessors = false;
 int nLimitProcessors = 1;
@@ -1302,11 +1337,20 @@ bool CBlock::CheckBlock() const
         if (!tx.CheckTransaction())
             return error("CheckBlock() : CheckTransaction failed");
 
-    // Check proof of work matches claimed amount
-    if (CBigNum().SetCompact(nBits) > bnProofOfWorkLimit)
-        return error("CheckBlock() : nBits below minimum work");
-    if (GetHash() > CBigNum().SetCompact(nBits).getuint256())
-        return error("CheckBlock() : hash doesn't match nBits");
+    // Check participation instead of work
+    if (nHeight >= POP_ACTIVATION_HEIGHT)
+    {
+        // After PoP activation, no proof of work needed
+        // Participation validated in AcceptBlock()
+    }
+    else
+    {
+        // Before activation, use original PoW
+        if (CBigNum().SetCompact(nBits) > bnProofOfWorkLimit)
+            return error("CheckBlock() : nBits below minimum work");
+        if (GetHash() > CBigNum().SetCompact(nBits).getuint256())
+            return error("CheckBlock() : hash doesn't match nBits");
+    }
 
     // Check merkleroot
     if (hashMerkleRoot != BuildMerkleTree())
@@ -1337,9 +1381,20 @@ bool CBlock::AcceptBlock()
         if (!tx.IsFinal(nTime))
             return error("AcceptBlock() : contains a non-final transaction");
 
-    // Check proof of work
-    if (nBits != GetNextWorkRequired(pindexPrev))
-        return error("AcceptBlock() : incorrect proof of work");
+    // Check consensus
+    int nHeight = pindexPrev->nHeight + 1;
+    if (nHeight >= POP_ACTIVATION_HEIGHT)
+    {
+        // Proof of Participation validation
+        if (!ValidateParticipation(nHeight))
+            return error("AcceptBlock() : invalid participation proof");
+    }
+    else
+    {
+        // Original proof of work
+        if (nBits != GetNextWorkRequired(pindexPrev))
+            return error("AcceptBlock() : incorrect proof of work");
+    }
 
     // Write block to history file
     if (!CheckDiskSpace(::GetSerializeSize(*this, SER_DISK)))
@@ -2447,10 +2502,10 @@ bool SendMessages(CNode* pto, bool fSendTrickle)
 
 //////////////////////////////////////////////////////////////////////////////
 //
-// BitcoinMiner
+// ParticipationValidator 
 //
 
-void GenerateBitcoins(bool fGenerate)
+void GenerateBlocks(bool fGenerate)
 {
     if (fGenerateBitcoins != fGenerate)
     {
@@ -2460,40 +2515,29 @@ void GenerateBitcoins(bool fGenerate)
     }
     if (fGenerateBitcoins)
     {
-        int nProcessors = wxThread::GetCPUCount();
-        printf("%d processors\n", nProcessors);
-        if (nProcessors < 1)
-            nProcessors = 1;
-        if (fLimitProcessors && nProcessors > nLimitProcessors)
-            nProcessors = nLimitProcessors;
-        int nAddThreads = nProcessors - vnThreadsRunning[3];
-        printf("Starting %d BitcoinMiner threads\n", nAddThreads);
-        for (int i = 0; i < nAddThreads; i++)
-        {
-            if (!CreateThread(ThreadBitcoinMiner, NULL))
-                printf("Error: CreateThread(ThreadBitcoinMiner) failed\n");
-            Sleep(10);
-        }
+        // Only one thread needed for PoP
+        if (!CreateThread(ThreadParticipant, NULL))
+            printf("Error: CreateThread(ThreadParticipant) failed\n");
     }
 }
 
-void ThreadBitcoinMiner(void* parg)
+void ThreadParticipant(void* parg)
 {
     try
     {
         vnThreadsRunning[3]++;
-        BitcoinMiner();
+        ParticipationValidator();
         vnThreadsRunning[3]--;
     }
     catch (std::exception& e) {
         vnThreadsRunning[3]--;
-        PrintException(&e, "ThreadBitcoinMiner()");
+        PrintException(&e, "ThreadParticipant()");
     } catch (...) {
         vnThreadsRunning[3]--;
-        PrintException(NULL, "ThreadBitcoinMiner()");
+        PrintException(NULL, "ThreadParticipant()");
     }
     UIThreadCall(bind(CalledSetStatusBar, "", 0));
-    printf("ThreadBitcoinMiner exiting, %d threads remaining\n", vnThreadsRunning[3]);
+    printf("ThreadParticipant exiting\n");
 }
 
 int FormatHashBlocks(void* pbuffer, unsigned int len)
@@ -2541,13 +2585,23 @@ void BlockSHA256(const void* pin, unsigned int nBlocks, void* pout)
 }
 
 
-void BitcoinMiner()
+void ParticipationValidator()
 {
-    printf("BitcoinMiner started\n");
+    printf("ParticipationValidator started\n");
 
     CKey key;
     key.MakeNewKey();
-    CBigNum bnExtraNonce = 0;
+    
+    // Check stake
+    int64 nStake = GetBalance();
+    if (nStake < MINIMUM_STAKE)
+    {
+        printf("Insufficient stake: %s < %s\n", 
+               FormatMoney(nStake).c_str(), 
+               FormatMoney(MINIMUM_STAKE).c_str());
+        return;
+    }
+    
     while (fGenerateBitcoins)
     {
         SetThreadPriority(THREAD_PRIORITY_LOWEST);
@@ -2565,7 +2619,8 @@ void BitcoinMiner()
 
         unsigned int nTransactionsUpdatedLast = nTransactionsUpdated;
         CBlockIndex* pindexPrev = pindexBest;
-        unsigned int nBits = GetNextWorkRequired(pindexPrev);
+        // No difficulty in PoP
+        unsigned int nBits = 0;
 
 
         //
@@ -2574,7 +2629,8 @@ void BitcoinMiner()
         CTransaction txNew;
         txNew.vin.resize(1);
         txNew.vin[0].prevout.SetNull();
-        txNew.vin[0].scriptSig << nBits << ++bnExtraNonce;
+        // Participation proof instead of nonce
+        txNew.vin[0].scriptSig << (int64)nStake << key.GetPubKey();
         txNew.vout.resize(1);
         txNew.vout[0].scriptPubKey << key.GetPubKey() << OP_CHECKSIG;
 
@@ -2628,11 +2684,11 @@ void BitcoinMiner()
         }
         pblock->nBits = nBits;
         pblock->vtx[0].vout[0].nValue = pblock->GetBlockValue(nFees);
-        printf("Running BitcoinMiner with %d transactions in block\n", pblock->vtx.size());
+        printf("Validating participation with %d transactions\n", pblock->vtx.size());
 
 
         //
-        // Prebuild hash buffer
+        // Check participation eligibility
         //
         struct unnamed1
         {
@@ -2664,24 +2720,24 @@ void BitcoinMiner()
 
 
         //
-        // Search
+        // Participation lottery
         //
-        int64 nStart = GetTime();
-        uint256 hashTarget = CBigNum().SetCompact(pblock->nBits).getuint256();
-        uint256 hash;
-        loop
-        {
-            BlockSHA256(&tmp.block, nBlocks0, &tmp.hash1);
-            BlockSHA256(&tmp.hash1, nBlocks1, &hash);
-
-            if (hash <= hashTarget)
+        Sleep(2000); // Check every 2 seconds
+        
+        // Simple VRF: hash(prevblock + pubkey + height)
+        uint256 lottery = Hash(BEGIN(pindexPrev->GetBlockHash()), 
+                              END(pindexPrev->GetBlockHash()),
+                              BEGIN(key.GetPubKey()),
+                              END(key.GetPubKey()));
+        
+        // Win if lottery value is low enough for our stake
+        uint256 target = (uint256(1) << 256) / (GetTotalStake() / nStake);
+        
+        if (lottery < target)
             {
-                pblock->nNonce = tmp.block.nNonce;
-                assert(hash == pblock->GetHash());
-
-                    //// debug print
-                    printf("BitcoinMiner:\n");
-                    printf("proof-of-work found  \n  hash: %s  \ntarget: %s\n", hash.GetHex().c_str(), hashTarget.GetHex().c_str());
+                // Won the lottery!
+                printf("ParticipationValidator:\n");
+                printf("Won participation lottery!\n");
                     pblock->print();
                     printf("%s ", DateTimeStrFormat("%x %H:%M", GetTime()).c_str());
                     printf("generated %s\n", FormatMoney(pblock->vtx[0].vout[0].nValue).c_str());
@@ -2702,7 +2758,7 @@ void BitcoinMiner()
 
                         // Process this block the same as if we had received it from another node
                         if (!ProcessBlock(NULL, pblock.release()))
-                            printf("ERROR in BitcoinMiner, ProcessBlock, block not accepted\n");
+                            printf("ERROR in ParticipationValidator, ProcessBlock, block not accepted\n");
                     }
                 }
                 SetThreadPriority(THREAD_PRIORITY_LOWEST);
@@ -2711,39 +2767,11 @@ void BitcoinMiner()
                 break;
             }
 
-            // Update nTime every few seconds
-            const unsigned int nMask = 0xffff;
-            if ((++tmp.block.nNonce & nMask) == 0)
+            // No mining metrics needed
+            else
             {
-                // Meter hashes/sec
-                static int64 nTimerStart;
-                static int nHashCounter;
-                if (nTimerStart == 0)
-                    nTimerStart = GetTimeMillis();
-                else
-                    nHashCounter++;
-                if (GetTimeMillis() - nTimerStart > 4000)
-                {
-                    static CCriticalSection cs;
-                    CRITICAL_BLOCK(cs)
-                    {
-                        if (GetTimeMillis() - nTimerStart > 4000)
-                        {
-                            double dHashesPerSec = 1000.0 * (nMask+1) * nHashCounter / (GetTimeMillis() - nTimerStart);
-                            nTimerStart = GetTimeMillis();
-                            nHashCounter = 0;
-                            string strStatus = strprintf("    %.0f khash/s", dHashesPerSec/1000.0);
-                            UIThreadCall(bind(CalledSetStatusBar, strStatus, 0));
-                            static int64 nLogTime;
-                            if (GetTime() - nLogTime > 30 * 60)
-                            {
-                                nLogTime = GetTime();
-                                printf("%s ", DateTimeStrFormat("%x %H:%M", GetTime()).c_str());
-                                printf("hashmeter %3d CPUs %6.0f khash/s\n", vnThreadsRunning[3], dHashesPerSec/1000.0);
-                            }
-                        }
-                    }
-                }
+                // Wait for next lottery
+                Sleep(2000); // Check every 2 seconds
 
                 // Check for stop or if block needs to be rebuilt
                 if (fShutdown)
