@@ -50,13 +50,13 @@ GoldcoinPoP is the evolution of Goldcoin (GLC) from Proof of Work to Proof of Pa
 ## Core Components
 
 ```
-participation.cpp/h     - Proof of Participation consensus engine
-vrf.h                  - Verifiable Random Function for lottery
-hybridfee.cpp          - Hybrid fee system (5% free space)
-ai_autonomy.cpp        - AI self-governance framework
-consensus_preservation.cpp - Protects all existing balances
-pop_security.cpp       - Security model for PoP
-hardfork.cpp           - Smooth transition at block 3,500,000
+participation_modern.cpp/h  - Modern C++23 PoP consensus engine
+hybridfee_modern.cpp/h     - Goldcoin's hybrid fee system (5% free + variable)
+qt_pop_widgets.cpp/h       - Qt 6.9 GUI components for PoP
+goldcoin_consensus.h       - Goldcoin-specific consensus parameters
+crypto_modern.h           - Modern cryptographic primitives
+ai_autonomy.cpp           - AI self-governance framework
+consensus_preservation.cpp - Protects all existing GLC balances
 ```
 
 ## Building from Source

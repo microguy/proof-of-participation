@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(/home/claude/bitcoin-refactoring-backup/patches/**)",
+      "Read(/home/claude/bitcoin-refactoring-backup/**)",
+      "Read(/home/claude/bitcoin-refactoring-backup/**)",
+      "Read(/home/claude/bitcoin-refactoring-backup/**)",
+      "Read(/home/claude/bitcoin-refactoring-backup/**)",
+      "Read(/home/claude/bitcoin-refactoring-backup/**)",
+      "Read(/home/claude/bitcoin-refactoring-backup/**)",
+      "Read(/home/claude/goldcoin-pop-modern/**)",
+      "Read(/home/claude/goldcoin-pop-modern/**)",
+      "Read(/home/claude/goldcoin-pop-modern/**)",
+      "Read(/home/claude/goldcoin-pop-modern/**)",
+      "WebFetch(domain:github.com)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
